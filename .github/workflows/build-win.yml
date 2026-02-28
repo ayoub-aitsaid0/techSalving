@@ -27,6 +27,8 @@ jobs:
     - name: Build Windows Executable
       # Utilise le script configuré dans package.json pour compiler sqlite en natif Windows
       run: npm run build:win
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
