@@ -114,6 +114,8 @@ Thumbs.db
 release/
 out/
 win-unpacked/
+dist/win-unpacked/
+release/win-unpacked/
 
 # IDE files
 .vscode/

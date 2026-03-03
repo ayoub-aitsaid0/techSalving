@@ -18,8 +18,13 @@
     "appId": "com.gestiondocuments.app",
     "productName": "Gestion Documents",
     "directories": {
-      "output": "dist"
+      "output": "release"
     },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
     "win": {
       "target": [
         "nsis"
