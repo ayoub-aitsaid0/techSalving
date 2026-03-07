@@ -207,11 +207,28 @@ const App: React.FC = () => {
         }
     };
 
-    // Générer le prochain numéro
+    // Générer le prochain numéro avec offset pour 2026
     const getNextNumero = (type: string, list: Array<{ numero: string }>) => {
         const year = new Date().getFullYear();
         const yearDocs = list.filter(d => d.numero.includes(`/${year}`));
-        const nextNum = yearDocs.length + 1;
+
+        // Définir le point de départ spécifique demandé pour 2026
+        let baseOffset = 0;
+        if (year === 2026) {
+            if (type === 'devis') baseOffset = 16; // Le prochain sera 17
+            else if (type === 'bl' || type === 'facture') baseOffset = 18; // Le prochain sera 19
+        }
+
+        // Trouver le plus grand numéro existant pour cette année
+        let maxNum = baseOffset;
+        for (const doc of yearDocs) {
+            const numPart = parseInt(doc.numero.split('/')[0], 10);
+            if (!isNaN(numPart) && numPart > maxNum) {
+                maxNum = numPart;
+            }
+        }
+
+        const nextNum = maxNum + 1;
         return `${String(nextNum).padStart(4, '0')}/${year}`;
     };
 

@@ -42,12 +42,18 @@ function numberToWordsFr(amount: number): string {
 function drawHeader(doc: jsPDF) {
     // Top orange lines and logo gap
     doc.setDrawColor(...ORANGE);
-    doc.setLineWidth(4);
-    doc.line(10, 20, 75, 20); // Left bar
-    doc.line(135, 20, 200, 20); // Right bar
 
-    // Exact logo image in the middle
-    doc.addImage(LOGO_BASE64, 'PNG', 80, 8, 50, 25);
+    // Épaisseur de la ligne pour correspondre au screenshot
+    doc.setLineWidth(10);
+
+    // Le logo sera placé de x=65 à x=145 (largeur 80)
+    // Ligne gauche : de 10 à 73 (chevauche la zone transparente du logo)
+    doc.line(10, 18, 73, 18);
+    // Ligne droite : de 137 à 200 (chevauche la zone transparente du logo)
+    doc.line(137, 18, 200, 18);
+
+    // Logo centré, plus large pour correspondre aux proportions
+    doc.addImage(LOGO_BASE64, 'PNG', 65, 7, 80, 22);
     doc.setTextColor(...BLACK);
 }
 
@@ -66,25 +72,31 @@ function drawInfoBoxes(doc: jsPDF, type: string, numero: string, dateStr: string
     doc.text(numero, 85, startY + 8, { align: 'right' });
 
     doc.setFont('helvetica', 'normal');
-    doc.text('Code client :', 13, startY + 16);
+    doc.text('Client :', 13, startY + 16);
     doc.setFont('helvetica', 'bold');
-    doc.text(client.code, 85, startY + 16, { align: 'right' });
+
+    // Raccourcir le nom s'il est trop long pour la petite case
+    let displayName = client.nom;
+    if (displayName.length > 25) {
+        displayName = displayName.substring(0, 25) + '...';
+    }
+    doc.text(displayName, 85, startY + 16, { align: 'right' });
 
     doc.setFont('helvetica', 'normal');
     doc.text(`Ouarzazate le, ${dateStr}`, 13, startY + 24);
 
     // Client Box (Right)
     doc.setDrawColor(30, 42, 64);
-    doc.roundedRect(100, startY, 100, 28, 2, 2, 'S');
+    doc.roundedRect(120, startY, 80, 28, 2, 2, 'S');
 
     doc.setFont('helvetica', 'bold');
-    doc.text(client.nom, 150, startY + 8, { align: 'center' });
+    doc.text(client.nom, 160, startY + 8, { align: 'center' });
 
     doc.setFont('helvetica', 'normal');
-    const splitAddress = doc.splitTextToSize(client.address || '', 90);
-    doc.text(splitAddress, 150, startY + 14, { align: 'center' });
+    const splitAddress = doc.splitTextToSize(client.address || '', 75);
+    doc.text(splitAddress, 160, startY + 14, { align: 'center' });
 
-    doc.text(`ICE : ${client.ice || ''}`, 150, startY + 24, { align: 'center' });
+    doc.text(`ICE : ${client.ice || ''}`, 160, startY + 24, { align: 'center' });
 
     // Optional Reference Line
     let currentY = startY + 36;
@@ -171,6 +183,12 @@ export function generateDevisPDF(devis: Devis, ci: CompanyInfo): Blob {
     doc.text('TOTAL HT : (DH)', x + 2, fixedBottomY + 5); doc.text(devis.totalHT.toFixed(2), x + w - 2, fixedBottomY + 5, { align: 'right' });
     doc.text('TVA (20%) :', x + 2, fixedBottomY + 13); doc.text(devis.tva.toFixed(2), x + w - 2, fixedBottomY + 13, { align: 'right' });
     doc.text('TOTAL TTC : (DH)', x + 2, fixedBottomY + 21); doc.text(devis.totalTTC.toFixed(2), x + w - 2, fixedBottomY + 21, { align: 'right' });
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Arrêté le présent devis à la somme de :', 10, fixedBottomY + 35);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${numberToWordsFr(devis.totalTTC)} dirhams.`, 10, fixedBottomY + 41);
 
     drawFooter(doc, ci);
     return doc.output('blob');
@@ -270,7 +288,10 @@ export function generateFacturePDF(facture: Facture, ci: CompanyInfo): Blob {
     doc.text('TOTAL TTC : (DH)', x + 2, fixedBottomY + 21); doc.text(facture.totalTTC.toFixed(2), x + w - 2, fixedBottomY + 21, { align: 'right' });
 
     doc.setFontSize(10);
-    doc.text(`Arrêté la présente facture à la somme de : ${numberToWordsFr(facture.totalTTC)} dirhams.`, 10, fixedBottomY + 35);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Arrêtée la présente facture à la somme de :', 10, fixedBottomY + 35);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${numberToWordsFr(facture.totalTTC)} dirhams.`, 10, fixedBottomY + 41);
 
     drawFooter(doc, ci);
     return doc.output('blob');
