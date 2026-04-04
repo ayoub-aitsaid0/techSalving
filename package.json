@@ -21,7 +21,12 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "node_modules/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/sql.js/dist/*.wasm",
+      "node_modules/pdf-parse/**/*"
     ],
     "win": {
       "target": [

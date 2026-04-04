@@ -6,6 +6,17 @@ const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
 
+// In the packaged app, the wasm file is unpacked from the asar into app.asar.unpacked.
+// We must tell sql.js where to find it explicitly.
+function getSqlJsWasmDir() {
+    if (__dirname.includes('app.asar')) {
+        // Packaged: __dirname is inside app.asar — wasm lives in app.asar.unpacked
+        return __dirname.replace(/app\.asar([\\/]).*/, `app.asar.unpacked$1node_modules$1sql.js$1dist`);
+    }
+    // Development
+    return path.join(__dirname, '..', 'node_modules', 'sql.js', 'dist');
+}
+
 class Statement {
     constructor(db, sql, onWrite) {
         this._db = db;
@@ -58,7 +69,10 @@ class Database {
     static async create(dbPath) {
         const instance = new Database();
         instance._dbPath = dbPath;
-        const SQL = await initSqlJs();
+        const wasmDir = getSqlJsWasmDir();
+        const SQL = await initSqlJs({
+            locateFile: file => path.join(wasmDir, file)
+        });
         if (fs.existsSync(dbPath)) {
             const buffer = fs.readFileSync(dbPath);
             instance._db = new SQL.Database(buffer);
