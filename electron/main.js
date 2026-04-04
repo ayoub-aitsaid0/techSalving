@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, shell, Notification } = require('electron');
 const path = require('path');
-const Database = require('better-sqlite3');
+const Database = require('./db-wrapper');
 const fs = require('fs');
 
 // Fix: Linux SUID sandbox is not configured in dev environments.
@@ -12,11 +12,11 @@ let mainWindow;
 let db;
 
 // Initialiser la base de données
-function initDatabase() {
+async function initDatabase() {
     const userDataPath = app.getPath('userData');
     const dbPath = path.join(userDataPath, 'gestion-documents.db');
 
-    db = new Database(dbPath);
+    db = await Database.create(dbPath);
 
     // Créer les tables existantes
     db.exec(`
@@ -108,10 +108,11 @@ function initDatabase() {
     );
   `);
 
-    // Migrations safe: ajouter colonnes manquantes sur factures
+    // Migrations safe
     const migrations = [
         "ALTER TABLE factures ADD COLUMN status TEXT DEFAULT 'brouillon'",
-        "ALTER TABLE factures ADD COLUMN date_due TEXT"
+        "ALTER TABLE factures ADD COLUMN date_due TEXT",
+        "ALTER TABLE supplier_invoices ADD COLUMN items TEXT DEFAULT '[]'"
     ];
     for (const sql of migrations) {
         try { db.exec(sql); } catch (e) { /* colonne déjà présente */ }
@@ -158,13 +159,17 @@ function createWindow() {
 }
 
 // Vérifier les échéances et envoyer des notifications Electron
+function formatDate(dateStr) {
+    return new Date(dateStr).toLocaleDateString('fr-FR');
+}
+
 function checkExpiringInvoices() {
     if (!db) return;
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
-    const soonDate = new Date(today);
-    soonDate.setDate(soonDate.getDate() + 5);
-    const soonStr = soonDate.toISOString().split('T')[0];
+    const warnDate = new Date(today);
+    warnDate.setDate(warnDate.getDate() + 7); // warn 7 days in advance
+    const warnStr = warnDate.toISOString().split('T')[0];
 
     // Factures clients en retard
     const overdueClient = db.prepare(`
@@ -173,12 +178,12 @@ function checkExpiringInvoices() {
         WHERE f.date_due IS NOT NULL AND f.date_due < ? AND f.status != 'payé'
     `).all(todayStr);
 
-    // Factures clients bientôt dues
+    // Factures clients à échéance dans 7 jours
     const soonClient = db.prepare(`
         SELECT f.numero, c.nom as client_nom, f.date_due
         FROM factures f JOIN clients c ON f.client_id = c.id
         WHERE f.date_due IS NOT NULL AND f.date_due >= ? AND f.date_due <= ? AND f.status != 'payé'
-    `).all(todayStr, soonStr);
+    `).all(todayStr, warnStr);
 
     // Factures fournisseurs en retard
     const overdueSupplier = db.prepare(`
@@ -187,22 +192,22 @@ function checkExpiringInvoices() {
         WHERE si.date_due IS NOT NULL AND si.date_due < ? AND si.status != 'payé'
     `).all(todayStr);
 
-    // Factures fournisseurs bientôt dues
+    // Factures fournisseurs à échéance dans 7 jours
     const soonSupplier = db.prepare(`
         SELECT si.reference, fo.nom as fournisseur_nom, si.date_due
         FROM supplier_invoices si JOIN fournisseurs fo ON si.fournisseur_id = fo.id
         WHERE si.date_due IS NOT NULL AND si.date_due >= ? AND si.date_due <= ? AND si.status != 'payé'
-    `).all(todayStr, soonStr);
+    `).all(todayStr, warnStr);
 
     const totalOverdue = overdueClient.length + overdueSupplier.length;
     const totalSoon = soonClient.length + soonSupplier.length;
 
     if (totalOverdue > 0 && Notification.isSupported()) {
         new Notification({
-            title: `⚠️ ${totalOverdue} Facture(s) en retard !`,
+            title: `Facture(s) en retard de paiement !`,
             body: [
-                ...overdueClient.map(f => `Facture ${f.numero} - ${f.client_nom}`),
-                ...overdueSupplier.map(f => `Fourn. ${f.reference} - ${f.fournisseur_nom}`)
+                ...overdueClient.map(f => `N° ${f.numero} - ${f.client_nom} (échu le ${formatDate(f.date_due)})`),
+                ...overdueSupplier.map(f => `Fourn. ${f.reference} - ${f.fournisseur_nom} (échu le ${formatDate(f.date_due)})`)
             ].slice(0, 3).join('\n'),
             urgency: 'critical'
         }).show();
@@ -210,17 +215,21 @@ function checkExpiringInvoices() {
 
     if (totalSoon > 0 && Notification.isSupported()) {
         new Notification({
-            title: `🔔 ${totalSoon} Facture(s) à échéance proche`,
+            title: `Facture(s) à échéance dans moins de 7 jours`,
             body: [
-                ...soonClient.map(f => `Facture ${f.numero} - ${f.client_nom} (${f.date_due})`),
-                ...soonSupplier.map(f => `Fourn. ${f.reference} - ${f.fournisseur_nom} (${f.date_due})`)
+                ...soonClient.map(f => `N° ${f.numero} - ${f.client_nom} — échéance le ${formatDate(f.date_due)}`),
+                ...soonSupplier.map(f => `Fourn. ${f.reference} - ${f.fournisseur_nom} — échéance le ${formatDate(f.date_due)}`)
             ].slice(0, 3).join('\n')
         }).show();
     }
 }
 
-app.whenReady().then(() => {
-    initDatabase();
+app.whenReady().then(async () => {
+    try {
+        await initDatabase();
+    } catch (err) {
+        console.error('FATAL: initDatabase failed:', err);
+    }
     createWindow();
 
     // Vérifier les échéances au démarrage et toutes les 6 heures
@@ -512,6 +521,7 @@ ipcMain.handle('get-supplier-invoices', () => {
     `).all();
     return rows.map(r => ({
         ...r,
+        items: (() => { try { return JSON.parse(r.items || '[]'); } catch { return []; } })(),
         totalHT: r.total_ht,
         totalTTC: r.total_ttc,
         dateIssue: r.date_issue,
@@ -523,12 +533,13 @@ ipcMain.handle('get-supplier-invoices', () => {
 
 ipcMain.handle('create-supplier-invoice', (event, inv) => {
     const stmt = db.prepare(`
-        INSERT INTO supplier_invoices (reference, fournisseur_id, total_ht, tva, total_ttc, date_issue, date_due, status, file_path, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO supplier_invoices (reference, fournisseur_id, total_ht, tva, total_ttc, date_issue, date_due, status, file_path, notes, items)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
         inv.reference, inv.fournisseur.id, inv.totalHT || 0, inv.tva || 0, inv.totalTTC || 0,
-        inv.dateIssue, inv.dateDue || null, inv.status || 'brouillon', inv.filePath || null, inv.notes || null
+        inv.dateIssue, inv.dateDue || null, inv.status || 'en attente', inv.filePath || null, inv.notes || null,
+        JSON.stringify(inv.items || [])
     );
     return { id: result.lastInsertRowid, ...inv };
 });
@@ -537,11 +548,12 @@ ipcMain.handle('update-supplier-invoice', (event, inv) => {
     db.prepare(`
         UPDATE supplier_invoices
         SET reference = ?, fournisseur_id = ?, total_ht = ?, tva = ?, total_ttc = ?,
-            date_issue = ?, date_due = ?, status = ?, file_path = ?, notes = ?
+            date_issue = ?, date_due = ?, status = ?, file_path = ?, notes = ?, items = ?
         WHERE id = ?
     `).run(
         inv.reference, inv.fournisseur.id, inv.totalHT || 0, inv.tva || 0, inv.totalTTC || 0,
-        inv.dateIssue, inv.dateDue || null, inv.status || 'brouillon', inv.filePath || null, inv.notes || null, inv.id
+        inv.dateIssue, inv.dateDue || null, inv.status || 'en attente', inv.filePath || null, inv.notes || null,
+        JSON.stringify(inv.items || []), inv.id
     );
     return inv;
 });
@@ -571,9 +583,146 @@ ipcMain.handle('upload-invoice-file', async () => {
     const destPath = path.join(uploadsDir, filename);
 
     fs.copyFileSync(srcPath, destPath);
-    // Stocker le chemin relatif pour la portabilité
     const relativePath = path.join('uploads', 'invoices', filename);
     return { success: true, filePath: relativePath, filename };
+});
+
+// =============================================
+// EXTRACTION AUTOMATIQUE FACTURE FOURNISSEUR
+// =============================================
+
+function normalizeAmount(str) {
+    if (!str) return 0;
+    // handle "1 234,56" or "1234.56" or "1 234.56"
+    return parseFloat(str.replace(/\s/g, '').replace(',', '.')) || 0;
+}
+
+function parseInvoiceText(text) {
+    const t = text.replace(/\r/g, ' ').replace(/\t/g, ' ');
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+    // Reference / N° facture
+    let reference = '';
+    const refMatch = t.match(/(?:N[°o°º]\s*(?:Facture|fact\.?)?|Facture\s+N[°o°º]|R[ée]f\.?\s*:?|FACT\.?\s*N[°o°º])\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-\.]{1,25})/i);
+    if (refMatch) reference = refMatch[1].trim();
+
+    // Date (dd/mm/yyyy or dd-mm-yyyy or yyyy-mm-dd)
+    let dateIssue = '';
+    const dateMatch = t.match(/(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{4})/);
+    if (dateMatch) dateIssue = `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
+    else {
+        const isoMatch = t.match(/(\d{4})[\/\-](\d{2})[\/\-](\d{2})/);
+        if (isoMatch) dateIssue = `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+    }
+
+    // Amounts
+    let totalTTC = 0, totalHT = 0, tva = 0;
+
+    const ttcMatch = t.match(/(?:Total\s+TTC|TOTAL\s+TTC|Net\s+[àa]\s+[Pp]ayer|NET\s+A\s+PAYER|Montant\s+TTC)\s*[:\-]?\s*([\d\s]+[,\.][\d]{2})/i);
+    if (ttcMatch) totalTTC = normalizeAmount(ttcMatch[1]);
+
+    const htMatch = t.match(/(?:Total\s+HT|TOTAL\s+HT|Montant\s+HT|Total\s+Hors\s+Taxe)\s*[:\-]?\s*([\d\s]+[,\.][\d]{2})/i);
+    if (htMatch) totalHT = normalizeAmount(htMatch[1]);
+
+    const tvaMatch = t.match(/(?:Montant\s+TVA|TVA\s*\d*\s*%?|T\.V\.A\.?)\s*[:\-]?\s*([\d\s]+[,\.][\d]{2})/i);
+    if (tvaMatch) tva = normalizeAmount(tvaMatch[1]);
+
+    // Derive missing values
+    if (totalTTC && totalHT && !tva) tva = Math.round((totalTTC - totalHT) * 100) / 100;
+    if (totalTTC && tva && !totalHT) totalHT = Math.round((totalTTC - tva) * 100) / 100;
+    if (totalHT && tva && !totalTTC) totalTTC = Math.round((totalHT + tva) * 100) / 100;
+
+    // ICE (15 digits)
+    let ice = '';
+    const iceMatch = t.match(/ICE\s*[:\-]?\s*(\d{15})/i);
+    if (iceMatch) ice = iceMatch[1];
+
+    // IF fiscal
+    let ifNum = '';
+    const ifMatch = t.match(/(?:I\.?F\.?|Identifiant\s+Fiscal)\s*[:\-]?\s*(\d{6,10})/i);
+    if (ifMatch) ifNum = ifMatch[1];
+
+    // Supplier name: first meaningful non-empty line
+    let fournisseurNom = '';
+    const meaningfulLines = lines.filter(l => l.length > 3 && !/^\d+$/.test(l));
+    if (meaningfulLines.length > 0) fournisseurNom = meaningfulLines[0].substring(0, 80);
+
+    // ── Line items extraction ──────────────────────────────────────────────
+    // Strategy: find lines that contain a description followed by numeric values.
+    // We skip header/footer keywords and lines that are pure totals.
+    const skipPatterns = /total|tva|t\.v\.a|remise|avoir|facture|bon de|adresse|ice|tel|email|rib|page|date|échéance|référence|désignation|description|quantité|montant|prix|unit/i;
+    const amountPattern = /([\d\s]{1,10}[,\.]\d{2})/g;
+
+    const items = [];
+    for (const line of lines) {
+        if (line.length < 5) continue;
+        if (skipPatterns.test(line)) continue;
+
+        const amounts = [...line.matchAll(amountPattern)].map(m => normalizeAmount(m[1]));
+        if (amounts.length === 0) continue;
+
+        // Line must have a non-numeric prefix as designation
+        const firstAmountIdx = line.search(/[\d\s]+[,\.][\d]{2}/);
+        const designation = line.substring(0, firstAmountIdx).trim().replace(/\s+/g, ' ');
+        if (designation.length < 3) continue;
+        if (/^\d+$/.test(designation)) continue;
+
+        let quantite = 1, prixUnitaire = 0, montant = 0;
+        if (amounts.length >= 3) {
+            // designation   qty   unit_price   total
+            quantite = amounts[0];
+            prixUnitaire = amounts[1];
+            montant = amounts[2];
+        } else if (amounts.length === 2) {
+            // designation   unit_price   total  OR  designation   qty   total
+            prixUnitaire = amounts[0];
+            montant = amounts[1];
+            if (prixUnitaire > 0) quantite = Math.round((montant / prixUnitaire) * 100) / 100 || 1;
+        } else if (amounts.length === 1) {
+            montant = amounts[0];
+            prixUnitaire = montant;
+        }
+
+        // Skip if montant is suspiciously large (likely a total row that slipped through)
+        if (totalTTC > 0 && montant >= totalTTC) continue;
+
+        items.push({ designation, quantite, prixUnitaire, montant });
+    }
+
+    return { reference, dateIssue, totalHT, tva, totalTTC, ice, ifNum, fournisseurNom, items };
+}
+
+ipcMain.handle('extract-and-upload-invoice', async () => {
+    const { dialog } = require('electron');
+    const { filePaths } = await dialog.showOpenDialog(mainWindow, {
+        title: 'Importer une facture fournisseur',
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        properties: ['openFile']
+    });
+    if (!filePaths || filePaths.length === 0) return { success: false };
+
+    const srcPath = filePaths[0];
+
+    // Copy file first
+    const filename = `${Date.now()}_${path.basename(srcPath)}`;
+    const uploadsDir = path.join(app.getPath('userData'), 'uploads', 'invoices');
+    const destPath = path.join(uploadsDir, filename);
+    fs.copyFileSync(srcPath, destPath);
+    const relativePath = path.join('uploads', 'invoices', filename);
+
+    // Extract text from PDF
+    let extracted = { reference: '', dateIssue: '', totalHT: 0, tva: 0, totalTTC: 0, ice: '', ifNum: '', fournisseurNom: '' };
+    try {
+        const pdfParse = require('pdf-parse');
+        const buffer = fs.readFileSync(srcPath);
+        const data = await pdfParse(buffer);
+        extracted = parseInvoiceText(data.text);
+    } catch (err) {
+        console.error('PDF extraction error:', err.message);
+        // Return file path even if extraction failed — user fills manually
+    }
+
+    return { success: true, filePath: relativePath, filename, extracted };
 });
 
 ipcMain.handle('open-invoice-file', (event, relativePath) => {
@@ -592,7 +741,7 @@ ipcMain.handle('get-alerts', () => {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
     const soonDate = new Date(today);
-    soonDate.setDate(soonDate.getDate() + 5);
+    soonDate.setDate(soonDate.getDate() + 7);
     const soonStr = soonDate.toISOString().split('T')[0];
 
     const clientAlerts = db.prepare(`

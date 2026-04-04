@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Gestion des fichiers scans
     uploadInvoiceFile: () => ipcRenderer.invoke('upload-invoice-file'),
     openInvoiceFile: (relativePath) => ipcRenderer.invoke('open-invoice-file', relativePath),
+    extractAndUploadInvoice: () => ipcRenderer.invoke('extract-and-upload-invoice'),
 
     // Alertes échéances
     getAlerts: () => ipcRenderer.invoke('get-alerts'),

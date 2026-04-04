@@ -43,17 +43,13 @@ function drawHeader(doc: jsPDF) {
     // Top orange lines and logo gap
     doc.setDrawColor(...ORANGE);
 
-    // Épaisseur de la ligne pour correspondre au screenshot
     doc.setLineWidth(10);
 
-    // Le logo sera placé de x=65 à x=145 (largeur 80)
-    // Ligne gauche : de 10 à 73 (chevauche la zone transparente du logo)
-    doc.line(10, 18, 73, 18);
-    // Ligne droite : de 137 à 200 (chevauche la zone transparente du logo)
-    doc.line(137, 18, 200, 18);
+    // Logo centré : x=52, largeur=106, hauteur=30 → occupe de x=52 à x=158
+    doc.line(10, 20, 50, 20);   // ligne gauche
+    doc.line(160, 20, 200, 20); // ligne droite
 
-    // Logo centré, plus large pour correspondre aux proportions
-    doc.addImage(LOGO_BASE64, 'PNG', 65, 7, 80, 22);
+    doc.addImage(LOGO_BASE64, 'PNG', 52, 5, 106, 30);
     doc.setTextColor(...BLACK);
 }
 
@@ -188,7 +184,7 @@ export function generateDevisPDF(devis: Devis, ci: CompanyInfo): Blob {
     doc.setFont('helvetica', 'normal');
     doc.text('Arrêté le présent devis à la somme de :', 10, fixedBottomY + 35);
     doc.setFont('helvetica', 'bold');
-    doc.text(`${numberToWordsFr(devis.totalTTC)} dirhams.`, 10, fixedBottomY + 41);
+    doc.text(`${numberToWordsFr(devis.totalTTC)}.`, 10, fixedBottomY + 41);
 
     drawFooter(doc, ci);
     return doc.output('blob');
@@ -291,7 +287,7 @@ export function generateFacturePDF(facture: Facture, ci: CompanyInfo): Blob {
     doc.setFont('helvetica', 'normal');
     doc.text('Arrêtée la présente facture à la somme de :', 10, fixedBottomY + 35);
     doc.setFont('helvetica', 'bold');
-    doc.text(`${numberToWordsFr(facture.totalTTC)} dirhams.`, 10, fixedBottomY + 41);
+    doc.text(`${numberToWordsFr(facture.totalTTC)}.`, 10, fixedBottomY + 41);
 
     drawFooter(doc, ci);
     return doc.output('blob');

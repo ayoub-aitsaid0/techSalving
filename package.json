@@ -6,10 +6,8 @@
   "scripts": {
     "start": "webpack serve --mode development",
     "build": "webpack --mode production",
-    "electron": "NODE_ENV=production electron --no-sandbox .",
-    "electron-dev": "concurrently \"npm start\" \"wait-on http://localhost:3000 && NODE_ENV=development electron --no-sandbox .\"",
-    "rebuild": "electron-rebuild -f -w better-sqlite3",
-    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "electron": "cross-env NODE_ENV=production electron --no-sandbox .",
+    "electron-dev": "concurrently \"npm start\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron --no-sandbox .\"",
     "dist": "npm run build && electron-builder",
     "build:win": "npm run build && electron-builder --win --x64",
     "type-check": "tsc --noEmit"
@@ -38,7 +36,9 @@
     }
   },
   "dependencies": {
-    "better-sqlite3": "^9.2.2",
+    "pdf-parse": "^1.1.1",
+    "recharts": "^2.13.3",
+    "sql.js": "^1.12.0",
     "jspdf": "^2.5.1",
     "jspdf-autotable": "^3.8.2",
     "lucide-react": "^0.263.1",
@@ -54,10 +54,10 @@
     "@types/react-dom": "^18.3.7",
     "babel-loader": "^9.2.1",
     "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
     "css-loader": "^6.8.1",
     "electron": "^28.1.0",
     "electron-builder": "^24.9.1",
-    "electron-rebuild": "^3.2.9",
     "html-webpack-plugin": "^5.6.0",
     "style-loader": "^3.3.3",
     "ts-loader": "^9.5.4",

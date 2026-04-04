@@ -86,16 +86,24 @@ export interface Fournisseur {
     created_at?: string;
 }
 
+export interface SupplierInvoiceItem {
+    designation: string;
+    quantite: number;
+    prixUnitaire: number;
+    montant: number;
+}
+
 export interface SupplierInvoice {
     id: number;
     reference: string;
     fournisseur: Fournisseur;
+    items: SupplierInvoiceItem[];
     totalHT: number;
     tva: number;
     totalTTC: number;
     dateIssue: string;
     dateDue?: string;
-    status: 'brouillon' | 'payé' | 'en retard';
+    status: 'en attente' | 'payé' | 'en retard';
     filePath?: string;
     notes?: string;
     created_at?: string;
@@ -149,6 +157,22 @@ export interface ElectronAPI {
 
     uploadInvoiceFile: () => Promise<{ success: boolean; filePath?: string; filename?: string }>;
     openInvoiceFile: (relativePath: string) => Promise<{ success: boolean; error?: string }>;
+    extractAndUploadInvoice: () => Promise<{
+        success: boolean;
+        filePath?: string;
+        filename?: string;
+        extracted?: {
+            reference: string;
+            dateIssue: string;
+            totalHT: number;
+            tva: number;
+            totalTTC: number;
+            ice: string;
+            ifNum: string;
+            fournisseurNom: string;
+            items: SupplierInvoiceItem[];
+        };
+    }>;
 
     getAlerts: () => Promise<Alert[]>;
 

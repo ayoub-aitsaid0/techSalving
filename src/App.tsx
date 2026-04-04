@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import {
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+    PieChart, Pie, Cell, LineChart, Line
+} from 'recharts';
 import { FileText, Package, Receipt, Users, Settings, BarChart3, Search, Plus, Printer, Eye, Edit, Trash2, Home, Download, Bell, Truck, AlertTriangle, Clock } from 'lucide-react';
-import type { CompanyInfo, Client, Devis, BonLivraison, Facture, DevisItem, BLItem, FactureItem, Fournisseur, SupplierInvoice, Alert } from './types/electron';
+import type { CompanyInfo, Client, Devis, BonLivraison, Facture, DevisItem, BLItem, FactureItem, Fournisseur, SupplierInvoice, SupplierInvoiceItem, Alert } from './types/electron';
 import { generateDevisPDF, generateBLPDF, generateFacturePDF, blobToBase64 } from './utils/pdfGenerator';
 
 // Vérifier si on est dans Electron ou en mode web
@@ -282,166 +286,217 @@ const App: React.FC = () => {
     // Page d'accueil avec Dashboard enrichi
     const HomePage: React.FC = () => {
         const currentYear = new Date().getFullYear();
+        const MONTHS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+        const fmt = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
-        // Calculs détaillés
-        const statsDevis = {
-            total: devis.length,
-            year: devis.filter(d => d.numero.includes(`/${currentYear}`)).length,
-            totalMontant: devis.reduce((sum, d) => sum + d.totalTTC, 0)
-        };
+        // ── KPI ────────────────────────────────────────────────────────────
+        const yearFactures = factures.filter(f => f.date?.startsWith(String(currentYear)));
+        const yearSupplier = supplierInvoices.filter(i => i.dateIssue?.startsWith(String(currentYear)));
 
-        const statsBL = {
-            total: bonLivraison.length,
-            year: bonLivraison.filter(b => b.numero.includes(`/${currentYear}`)).length
-        };
+        const caFacture = yearFactures.reduce((s, f) => s + f.totalTTC, 0);
+        const caAchats  = yearSupplier.reduce((s, i) => s + i.totalTTC, 0);
+        const marge     = caFacture - caAchats;
+        const facturesPaye = yearFactures.filter(f => f.status === 'payé').reduce((s, f) => s + f.totalTTC, 0);
+        const facturesImpaye = yearFactures.filter(f => f.status !== 'payé').reduce((s, f) => s + f.totalTTC, 0);
 
-        const statsFactures = {
-            total: factures.length,
-            year: factures.filter(f => f.numero.includes(`/${currentYear}`)).length,
-            totalMontant: factures.reduce((sum, f) => sum + f.totalTTC, 0)
-        };
+        // ── Monthly revenue vs purchases ───────────────────────────────────
+        const monthlyData = MONTHS.map((month, idx) => {
+            const m = String(idx + 1).padStart(2, '0');
+            const prefix = `${currentYear}-${m}`;
+            const ca = factures.filter(f => f.date?.startsWith(prefix)).reduce((s, f) => s + f.totalTTC, 0);
+            const achats = supplierInvoices.filter(i => i.dateIssue?.startsWith(prefix)).reduce((s, i) => s + i.totalTTC, 0);
+            return { month, ca, achats, marge: ca - achats };
+        });
 
-        const activeClients = clients.length;
+        // ── Facture status breakdown ───────────────────────────────────────
+        const statusCounts = [
+            { name: 'Payées',     value: factures.filter(f => f.status === 'payé').length,       color: '#22c55e' },
+            { name: 'En attente', value: factures.filter(f => f.status === 'brouillon' || f.status === 'en attente' || !f.status).length, color: '#3b82f6' },
+            { name: 'En retard',  value: factures.filter(f => f.status === 'en retard').length,   color: '#ef4444' },
+        ].filter(s => s.value > 0);
+
+        // ── Top 5 clients by CA ────────────────────────────────────────────
+        const clientCA: Record<string, number> = {};
+        factures.forEach(f => {
+            const nom = f.client.nom;
+            clientCA[nom] = (clientCA[nom] || 0) + f.totalTTC;
+        });
+        const topClients = Object.entries(clientCA)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([nom, ca]) => ({ nom: nom.length > 16 ? nom.substring(0, 14) + '…' : nom, ca }));
+
+        // ── Cumulative cashflow line ───────────────────────────────────────
+        const cashflowData = MONTHS.map((month, idx) => {
+            const m = String(idx + 1).padStart(2, '0');
+            const prefix = `${currentYear}-${m}`;
+            const encaisse = factures.filter(f => f.date?.startsWith(prefix) && f.status === 'payé').reduce((s, f) => s + f.totalTTC, 0);
+            const depense  = supplierInvoices.filter(i => i.dateIssue?.startsWith(prefix) && i.status === 'payé').reduce((s, i) => s + i.totalTTC, 0);
+            return { month, encaisse, depense };
+        });
 
         const overdueAlerts = alerts.filter(a => a.isOverdue);
-        const soonAlerts = alerts.filter(a => !a.isOverdue);
+        const soonAlerts    = alerts.filter(a => !a.isOverdue);
+
+        const KpiCard = ({ label, value, sub, color }: { label: string; value: string; sub?: string; color: string }) => (
+            <div className={`bg-white rounded-2xl shadow-sm border border-gray-100 p-5`}>
+                <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">{label}</p>
+                <p className={`text-3xl font-extrabold ${color}`}>{value}</p>
+                {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+            </div>
+        );
 
         return (
-            <div className="min-h-screen bg-gray-50 p-6 md:p-8">
-                <div className="flex justify-between items-center mb-8">
-                    <div>
-                        <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Tableau de bord</h2>
-                        <p className="text-sm text-gray-500 mt-1">Gérez vos activités et suivez vos performances annuelles ({currentYear}).</p>
-                    </div>
+            <div className="min-h-screen bg-gray-50 p-6">
+                <div className="mb-6">
+                    <h2 className="text-3xl font-extrabold text-gray-900">Tableau de bord</h2>
+                    <p className="text-sm text-gray-500 mt-1">Performances financières — {currentYear}</p>
                 </div>
 
-                {/* Alertes échéances avec UI modernisée */}
+                {/* ── Alertes ── */}
                 {alerts.length > 0 && (
-                    <div className="mb-10 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                        <h3 className="text-xl font-bold mb-5 flex items-center gap-2 text-gray-800">
-                            <span className="p-2 bg-red-100 rounded-lg text-red-600"><AlertTriangle size={20} /></span>
-                            Alertes Échéances
+                    <div className="mb-6 bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+                        <h3 className="text-base font-bold mb-4 flex items-center gap-2 text-gray-800">
+                            <span className="p-1.5 bg-red-100 rounded-lg text-red-600"><AlertTriangle size={16} /></span>
+                            Alertes Échéances ({alerts.length})
                         </h3>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                             {overdueAlerts.map(a => (
-                                <div key={`${a.type}-${a.id}`} className="relative overflow-hidden bg-gradient-to-r from-red-50 to-white border border-red-200 rounded-xl p-5 flex justify-between items-center transition-all hover:shadow-md">
-                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-red-500 rounded-l-xl"></div>
+                                <div key={`${a.type}-${a.id}`} className="relative overflow-hidden bg-red-50 border border-red-200 rounded-xl p-4 flex justify-between items-center">
+                                    <div className="absolute top-0 left-0 w-1 h-full bg-red-500 rounded-l-xl"></div>
                                     <div className="ml-2">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <span className="font-bold text-red-700 text-sm tracking-wide">⚠️ EN RETARD</span>
-                                            <span className="text-xs bg-white border border-red-200 text-red-800 px-2.5 py-0.5 rounded-full shadow-sm font-medium">{a.type === 'client' ? 'Facture Client' : 'Fact. Fournisseur'}</span>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="text-xs font-bold text-red-700">EN RETARD</span>
+                                            <span className="text-xs bg-white border border-red-200 text-red-700 px-2 py-0.5 rounded-full">{a.type === 'client' ? 'Client' : 'Fourn.'}</span>
                                         </div>
-                                        <p className="font-semibold text-gray-900 text-lg">{a.numero} — <span className="font-medium text-gray-600">{a.nom_tiers}</span></p>
-                                        <p className="text-sm text-red-600 flex items-center gap-1.5 mt-1 font-medium"><Clock size={14} /> Échue le {new Date(a.date_due).toLocaleDateString('fr-FR')} (Retard: {Math.abs(a.daysUntilDue)} j)</p>
+                                        <p className="font-semibold text-gray-900">{a.numero} — {a.nom_tiers}</p>
+                                        <p className="text-xs text-red-600 flex items-center gap-1 mt-0.5"><Clock size={12} /> Échu le {new Date(a.date_due).toLocaleDateString('fr-FR')} ({Math.abs(a.daysUntilDue)} j)</p>
                                     </div>
-                                    <div className="text-right">
-                                        <p className="font-black text-2xl text-red-700">{a.totalTTC.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-sm">DH</span></p>
-                                    </div>
+                                    <p className="font-black text-xl text-red-700 shrink-0">{fmt(a.totalTTC)} DH</p>
                                 </div>
                             ))}
                             {soonAlerts.map(a => (
-                                <div key={`${a.type}-${a.id}`} className="relative overflow-hidden bg-gradient-to-r from-amber-50 to-white border border-amber-200 rounded-xl p-5 flex justify-between items-center transition-all hover:shadow-md">
-                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-amber-500 rounded-l-xl"></div>
+                                <div key={`${a.type}-${a.id}`} className="relative overflow-hidden bg-amber-50 border border-amber-200 rounded-xl p-4 flex justify-between items-center">
+                                    <div className="absolute top-0 left-0 w-1 h-full bg-amber-400 rounded-l-xl"></div>
                                     <div className="ml-2">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <span className="font-bold text-amber-700 text-sm tracking-wide">🔔 BIENTÔT DUE</span>
-                                            <span className="text-xs bg-white border border-amber-200 text-amber-800 px-2.5 py-0.5 rounded-full shadow-sm font-medium">{a.type === 'client' ? 'Facture Client' : 'Fact. Fournisseur'}</span>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="text-xs font-bold text-amber-700">BIENTÔT DUE</span>
+                                            <span className="text-xs bg-white border border-amber-200 text-amber-700 px-2 py-0.5 rounded-full">{a.type === 'client' ? 'Client' : 'Fourn.'}</span>
                                         </div>
-                                        <p className="font-semibold text-gray-900 text-lg">{a.numero} — <span className="font-medium text-gray-600">{a.nom_tiers}</span></p>
-                                        <p className="text-sm text-amber-600 flex items-center gap-1.5 mt-1 font-medium"><Clock size={14} /> Échéance: {new Date(a.date_due).toLocaleDateString('fr-FR')} (dans {a.daysUntilDue} j)</p>
+                                        <p className="font-semibold text-gray-900">{a.numero} — {a.nom_tiers}</p>
+                                        <p className="text-xs text-amber-600 flex items-center gap-1 mt-0.5"><Clock size={12} /> Échéance {new Date(a.date_due).toLocaleDateString('fr-FR')} (dans {a.daysUntilDue} j)</p>
                                     </div>
-                                    <div className="text-right">
-                                        <p className="font-black text-2xl text-amber-700">{a.totalTTC.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-sm">DH</span></p>
-                                    </div>
+                                    <p className="font-black text-xl text-amber-700 shrink-0">{fmt(a.totalTTC)} DH</p>
                                 </div>
                             ))}
                         </div>
                     </div>
                 )}
 
-                {/* Dashboard Stats Consolidaded */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
-                    {/* Stat Devis */}
-                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 transition-transform hover:-translate-y-1 hover:shadow-lg duration-300">
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="bg-blue-50 text-blue-600 p-3.5 rounded-xl">
-                                <FileText size={24} strokeWidth={2.5} />
-                            </div>
-                            <span className="bg-blue-100 text-blue-800 text-xs font-bold px-2.5 py-1 rounded-full">{currentYear}</span>
-                        </div>
-                        <h3 className="text-gray-500 text-sm font-semibold uppercase tracking-wider">Devis validés</h3>
-                        <p className="text-4xl font-extrabold text-gray-900 mt-2">{statsDevis.year}</p>
-                        <div className="mt-4 pt-4 border-t border-gray-100">
-                            <div className="flex justify-between items-end">
-                                <span className="text-xs text-gray-500">Chiffre total</span>
-                                <span className="font-bold text-blue-600">{statsDevis.totalMontant.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DH</span>
-                            </div>
-                        </div>
+                {/* ── KPIs ── */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    <KpiCard label="CA Facturé" value={`${fmt(caFacture)} DH`} sub={`${yearFactures.length} factures`} color="text-purple-700" />
+                    <KpiCard label="Achats Fournisseurs" value={`${fmt(caAchats)} DH`} sub={`${yearSupplier.length} factures`} color="text-orange-600" />
+                    <KpiCard label="Marge Brute" value={`${fmt(marge)} DH`} sub={caFacture > 0 ? `${Math.round(marge / caFacture * 100)}% du CA` : '-'} color={marge >= 0 ? 'text-emerald-600' : 'text-red-600'} />
+                    <KpiCard label="Impayés clients" value={`${fmt(facturesImpaye)} DH`} sub={`Encaissé: ${fmt(facturesPaye)} DH`} color="text-red-600" />
+                </div>
+
+                {/* ── Charts row 1 ── */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+
+                    {/* Bar chart — CA vs Achats par mois */}
+                    <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+                        <h3 className="text-sm font-bold text-gray-700 mb-4">CA Facturé vs Achats — mensuel {currentYear}</h3>
+                        <ResponsiveContainer width="100%" height={240}>
+                            <BarChart data={monthlyData} margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                                <YAxis tick={{ fontSize: 11 }} tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
+                                <Tooltip formatter={(v: number) => `${fmt(v)} DH`} />
+                                <Legend wrapperStyle={{ fontSize: 12 }} />
+                                <Bar dataKey="ca" name="CA Facturé" fill="#9333ea" radius={[3, 3, 0, 0]} />
+                                <Bar dataKey="achats" name="Achats" fill="#f97316" radius={[3, 3, 0, 0]} />
+                            </BarChart>
+                        </ResponsiveContainer>
                     </div>
 
-                    {/* Stat BL */}
-                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 transition-transform hover:-translate-y-1 hover:shadow-lg duration-300">
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="bg-emerald-50 text-emerald-600 p-3.5 rounded-xl">
-                                <Package size={24} strokeWidth={2.5} />
-                            </div>
-                            <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-1 rounded-full">{currentYear}</span>
-                        </div>
-                        <h3 className="text-gray-500 text-sm font-semibold uppercase tracking-wider">Bons de livraison</h3>
-                        <p className="text-4xl font-extrabold text-gray-900 mt-2">{statsBL.year}</p>
-                        <div className="mt-4 pt-4 border-t border-gray-100">
-                            <div className="flex justify-between items-end">
-                                <span className="text-xs text-gray-500">Total historique</span>
-                                <span className="font-bold text-emerald-600">{statsBL.total} docs</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Stat Factures */}
-                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 transition-transform hover:-translate-y-1 hover:shadow-lg duration-300">
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="bg-purple-50 text-purple-600 p-3.5 rounded-xl">
-                                <Receipt size={24} strokeWidth={2.5} />
-                            </div>
-                            <span className="bg-purple-100 text-purple-800 text-xs font-bold px-2.5 py-1 rounded-full">{currentYear}</span>
-                        </div>
-                        <h3 className="text-gray-500 text-sm font-semibold uppercase tracking-wider">Factures émises</h3>
-                        <p className="text-4xl font-extrabold text-gray-900 mt-2">{statsFactures.year}</p>
-                        <div className="mt-4 pt-4 border-t border-gray-100">
-                            <div className="flex justify-between items-end">
-                                <span className="text-xs text-gray-500">CA Facturé</span>
-                                <span className="font-bold text-purple-600">{statsFactures.totalMontant.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DH</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Stat Clients */}
-                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 transition-transform hover:-translate-y-1 hover:shadow-lg duration-300">
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="bg-orange-50 text-orange-600 p-3.5 rounded-xl">
-                                <Users size={24} strokeWidth={2.5} />
-                            </div>
-                            <span className="bg-orange-100 text-orange-800 text-xs font-bold px-2.5 py-1 rounded-full">Global</span>
-                        </div>
-                        <h3 className="text-gray-500 text-sm font-semibold uppercase tracking-wider">Clients enregistrés</h3>
-                        <p className="text-4xl font-extrabold text-gray-900 mt-2">{activeClients}</p>
-                        <div className="mt-4 pt-4 border-t border-gray-100">
-                            <div className="flex justify-between items-end">
-                                <span className="text-xs text-gray-500">Fournisseurs</span>
-                                <span className="font-bold text-orange-600">{fournisseurs.length} actifs</span>
-                            </div>
-                        </div>
+                    {/* Pie — statuts factures */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+                        <h3 className="text-sm font-bold text-gray-700 mb-4">Statut des Factures Clients</h3>
+                        {statusCounts.length > 0 ? (
+                            <>
+                                <ResponsiveContainer width="100%" height={180}>
+                                    <PieChart>
+                                        <Pie data={statusCounts} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3}>
+                                            {statusCounts.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                                        </Pie>
+                                        <Tooltip formatter={(v: number) => `${v} facture${v > 1 ? 's' : ''}`} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                                <div className="flex flex-col gap-1.5 mt-2">
+                                    {statusCounts.map((s, i) => (
+                                        <div key={i} className="flex items-center justify-between text-xs">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-2.5 h-2.5 rounded-full" style={{ background: s.color }}></div>
+                                                <span className="text-gray-600">{s.name}</span>
+                                            </div>
+                                            <span className="font-bold text-gray-800">{s.value}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        ) : (
+                            <div className="flex items-center justify-center h-40 text-gray-400 text-sm">Aucune facture</div>
+                        )}
                     </div>
                 </div>
 
-                {/* Actions rapides améliorées */}
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-                    <h3 className="text-xl font-bold mb-6 text-gray-800">Actions rapides</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <QuickAction label="Créer Devis" icon={<FileText size={22} />} onClick={() => setCurrentPage('devis')} color="blue" />
-                        <QuickAction label="Créer BL" icon={<Package size={22} />} onClick={() => setCurrentPage('bl')} color="green" />
-                        <QuickAction label="Créer Facture" icon={<Receipt size={22} />} onClick={() => setCurrentPage('factures')} color="purple" />
-                        <QuickAction label="Saisir Achat" icon={<Truck size={22} />} onClick={() => setCurrentPage('factures-fournisseurs')} color="orange" />
+                {/* ── Charts row 2 ── */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+
+                    {/* Line — encaissements vs dépenses */}
+                    <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+                        <h3 className="text-sm font-bold text-gray-700 mb-4">Encaissements vs Décaissements (payé) — {currentYear}</h3>
+                        <ResponsiveContainer width="100%" height={220}>
+                            <LineChart data={cashflowData} margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                                <YAxis tick={{ fontSize: 11 }} tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
+                                <Tooltip formatter={(v: number) => `${fmt(v)} DH`} />
+                                <Legend wrapperStyle={{ fontSize: 12 }} />
+                                <Line type="monotone" dataKey="encaisse" name="Encaissé" stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} />
+                                <Line type="monotone" dataKey="depense" name="Décaissé" stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+
+                    {/* Bar — Top 5 clients */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+                        <h3 className="text-sm font-bold text-gray-700 mb-4">Top 5 Clients par CA</h3>
+                        {topClients.length > 0 ? (
+                            <ResponsiveContainer width="100%" height={220}>
+                                <BarChart data={topClients} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+                                    <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
+                                    <YAxis type="category" dataKey="nom" tick={{ fontSize: 10 }} width={70} />
+                                    <Tooltip formatter={(v: number) => `${fmt(v)} DH`} />
+                                    <Bar dataKey="ca" name="CA TTC" fill="#9333ea" radius={[0, 3, 3, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div className="flex items-center justify-center h-40 text-gray-400 text-sm">Aucune donnée</div>
+                        )}
+                    </div>
+                </div>
+
+                {/* ── Actions rapides ── */}
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                    <h3 className="text-base font-bold mb-4 text-gray-800">Actions rapides</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <QuickAction label="Créer Devis" icon={<FileText size={20} />} onClick={() => setCurrentPage('devis')} color="blue" />
+                        <QuickAction label="Créer BL" icon={<Package size={20} />} onClick={() => setCurrentPage('bl')} color="green" />
+                        <QuickAction label="Créer Facture" icon={<Receipt size={20} />} onClick={() => setCurrentPage('factures')} color="purple" />
+                        <QuickAction label="Saisir Achat" icon={<Truck size={20} />} onClick={() => setCurrentPage('factures-fournisseurs')} color="orange" />
                     </div>
                 </div>
             </div>
@@ -1455,7 +1510,7 @@ const App: React.FC = () => {
                     <FactureForm
                         facture={editingFacture}
                         clients={clients}
-                        devis={devis}
+                        bonLivraisons={bonLivraison}
                         nextNumero={getNextNumero('facture', factures)}
                         onSave={handleSaveFacture}
                         onCancel={() => { setShowForm(false); setEditingFacture(null); }}
@@ -1534,28 +1589,66 @@ const App: React.FC = () => {
     };
 
     // FACTURE - FORMULAIRE
-    const FactureForm = ({ facture, clients, devis: devisList, nextNumero, onSave, onCancel }: {
+    const FactureForm = ({ facture, clients, bonLivraisons, nextNumero, onSave, onCancel }: {
         facture: Facture | null;
         clients: Client[];
-        devis: Devis[];
+        bonLivraisons: BonLivraison[];
         nextNumero: string;
         onSave: (f: Omit<Facture, 'id'> & { id?: number }) => void;
         onCancel: () => void;
     }) => {
+        const [clientId, setClientId] = useState(facture?.client.id.toString() || '');
+        const [selectedBLId, setSelectedBLId] = useState<string>('');
+        const [echeanceDays, setEcheanceDays] = useState<30 | 60 | 90>(30);
         const [formData, setFormData] = useState({
             numero: facture?.numero || nextNumero,
             date: facture?.date || new Date().toISOString().split('T')[0],
-            clientId: facture?.client.id.toString() || '',
-            numeroDevis: facture?.numeroDevis || '',
-            items: facture?.items || [{ designation: '', quantite: 1, prixUnitaire: 0 }] as FactureItem[]
+            items: facture?.items || [] as FactureItem[]
         });
 
-        const addItem = () => setFormData({ ...formData, items: [...formData.items, { designation: '', quantite: 1, prixUnitaire: 0 }] });
-        const removeItem = (index: number) => setFormData({ ...formData, items: formData.items.filter((_, i) => i !== index) });
+        const computedDateDue = (() => {
+            if (facture?.dateDue) return facture.dateDue;
+            const base = new Date(formData.date);
+            base.setDate(base.getDate() + echeanceDays);
+            return base.toISOString().split('T')[0];
+        })();
+
+        // BLs belonging to selected client
+        const clientBLs = bonLivraisons.filter(bl => bl.client.id === parseInt(clientId));
+
+        const handleClientChange = (newClientId: string) => {
+            setClientId(newClientId);
+            setSelectedBLId('');
+            setFormData(prev => ({ ...prev, items: [] }));
+        };
+
+        const handleBLChange = (blId: string) => {
+            setSelectedBLId(blId);
+            if (!blId) {
+                setFormData(prev => ({ ...prev, items: [] }));
+                return;
+            }
+            const bl = bonLivraisons.find(b => b.id === parseInt(blId));
+            if (bl) {
+                setFormData(prev => ({
+                    ...prev,
+                    items: bl.items.map(item => ({
+                        designation: item.designation,
+                        quantite: item.quantite,
+                        prixUnitaire: 0
+                    }))
+                }));
+            }
+        };
+
+        const addItem = () => setFormData(prev => ({ ...prev, items: [...prev.items, { designation: '', quantite: 1, prixUnitaire: 0 }] }));
+        const removeItem = (index: number) => setFormData(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
         const updateItem = (index: number, field: keyof FactureItem, value: string | number) => {
-            const newItems = [...formData.items];
-            newItems[index] = { ...newItems[index], [field]: value };
-            setFormData({ ...formData, items: newItems });
+            setFormData(prev => {
+                const newItems = [...prev.items];
+                newItems[index] = { ...newItems[index], [field]: value };
+                return { ...prev, items: newItems };
+            });
         };
 
         const calculateTotals = () => {
@@ -1566,69 +1659,160 @@ const App: React.FC = () => {
         };
 
         const handleSave = () => {
-            const client = clients.find(c => c.id === parseInt(formData.clientId));
+            const client = clients.find(c => c.id === parseInt(clientId));
             if (!client) { alert('Veuillez sélectionner un client'); return; }
+            if (formData.items.length === 0) { alert('Veuillez sélectionner un bon de livraison ou ajouter des articles'); return; }
+            const selectedBL = bonLivraisons.find(b => b.id === parseInt(selectedBLId));
             const { totalHT, tva, totalTTC } = calculateTotals();
-            onSave({ numero: formData.numero, date: formData.date, client, numeroDevis: formData.numeroDevis || undefined, items: formData.items, totalHT, tva, totalTTC });
+            onSave({
+                numero: formData.numero,
+                date: formData.date,
+                client,
+                numeroDevis: selectedBL?.numero || undefined,
+                items: formData.items,
+                totalHT,
+                tva,
+                totalTTC,
+                status: facture?.status || 'brouillon',
+                dateDue: computedDateDue
+            });
         };
 
         const { totalHT, tva, totalTTC } = calculateTotals();
+        const blSelected = !!selectedBLId;
 
         return (
             <div className="bg-white rounded-lg shadow p-6 mb-6">
                 <h3 className="text-xl font-bold mb-4">{facture ? 'Modifier la facture' : 'Nouvelle facture'}</h3>
-                <div className="grid grid-cols-4 gap-4 mb-6">
-                    <div><label className="block text-sm font-medium mb-1">N° Facture</label><input type="text" value={formData.numero} disabled className="w-full border rounded px-3 py-2 bg-gray-100" /></div>
-                    <div><label className="block text-sm font-medium mb-1">Date *</label><input type="date" value={formData.date} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="w-full border rounded px-3 py-2" /></div>
-                    <div><label className="block text-sm font-medium mb-1">Client *</label>
-                        <select value={formData.clientId} onChange={(e) => setFormData({ ...formData, clientId: e.target.value })} className="w-full border rounded px-3 py-2">
-                            <option value="">Sélectionner</option>
-                            {clients.map(c => <option key={c.id} value={c.id}>{c.code} - {c.nom}</option>)}
+
+                {/* Step 1 — Numéro, date et échéance */}
+                <div className="grid grid-cols-4 gap-4 mb-4">
+                    <div>
+                        <label className="block text-sm font-medium mb-1">N° Facture</label>
+                        <input type="text" value={formData.numero} disabled className="w-full border rounded px-3 py-2 bg-gray-100" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1">Date *</label>
+                        <input type="date" value={formData.date} onChange={(e) => setFormData(prev => ({ ...prev, date: e.target.value }))} className="w-full border rounded px-3 py-2" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1">Délai de paiement *</label>
+                        <select
+                            value={echeanceDays}
+                            onChange={(e) => setEcheanceDays(parseInt(e.target.value) as 30 | 60 | 90)}
+                            className="w-full border rounded px-3 py-2"
+                        >
+                            <option value={30}>30 jours</option>
+                            <option value={60}>60 jours</option>
+                            <option value={90}>90 jours</option>
                         </select>
                     </div>
-                    <div><label className="block text-sm font-medium mb-1">N° Devis (optionnel)</label><input type="text" value={formData.numeroDevis} onChange={(e) => setFormData({ ...formData, numeroDevis: e.target.value })} className="w-full border rounded px-3 py-2" placeholder="0001/2026" /></div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1">Date d'échéance</label>
+                        <input
+                            type="text"
+                            value={new Date(computedDateDue).toLocaleDateString('fr-FR')}
+                            disabled
+                            className="w-full border rounded px-3 py-2 bg-purple-50 text-purple-700 font-semibold"
+                        />
+                    </div>
                 </div>
 
+                {/* Step 2 — Client */}
                 <div className="mb-4">
-                    <div className="flex justify-between items-center mb-2">
-                        <h4 className="font-semibold">Articles</h4>
-                        <button onClick={addItem} className="bg-purple-600 text-white px-3 py-1 rounded text-sm flex items-center gap-1"><Plus size={16} />Ajouter</button>
-                    </div>
-                    <div className="border rounded">
-                        <table className="w-full">
-                            <thead className="bg-gray-50">
-                                <tr>
-                                    <th className="px-4 py-2 text-left text-sm">Désignation</th>
-                                    <th className="px-4 py-2 text-left text-sm w-24">Quantité</th>
-                                    <th className="px-4 py-2 text-left text-sm w-32">Prix Unit. (DH)</th>
-                                    <th className="px-4 py-2 text-left text-sm w-32">Total HT (DH)</th>
-                                    <th className="px-4 py-2 w-16"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {formData.items.map((item, idx) => (
-                                    <tr key={idx} className="border-t">
-                                        <td className="px-4 py-2"><input type="text" value={item.designation} onChange={(e) => updateItem(idx, 'designation', e.target.value)} className="w-full border rounded px-2 py-1" placeholder="Désignation" /></td>
-                                        <td className="px-4 py-2"><input type="number" value={item.quantite} onChange={(e) => updateItem(idx, 'quantite', parseFloat(e.target.value) || 0)} className="w-full border rounded px-2 py-1" min="0" /></td>
-                                        <td className="px-4 py-2"><input type="number" value={item.prixUnitaire} onChange={(e) => updateItem(idx, 'prixUnitaire', parseFloat(e.target.value) || 0)} className="w-full border rounded px-2 py-1" min="0" step="0.01" /></td>
-                                        <td className="px-4 py-2 font-semibold">{(item.quantite * item.prixUnitaire).toFixed(2)}</td>
-                                        <td className="px-4 py-2">{formData.items.length > 1 && <button onClick={() => removeItem(idx)} className="text-red-600 hover:text-red-800"><Trash2 size={16} /></button>}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                    <label className="block text-sm font-medium mb-1">Client *</label>
+                    <select value={clientId} onChange={(e) => handleClientChange(e.target.value)} className="w-full border rounded px-3 py-2">
+                        <option value="">— Sélectionner un client —</option>
+                        {clients.map(c => <option key={c.id} value={c.id}>{c.code} - {c.nom}</option>)}
+                    </select>
                 </div>
 
-                <div className="bg-gray-50 rounded p-4 mb-4">
-                    <div className="flex justify-end">
-                        <div className="w-64">
-                            <div className="flex justify-between mb-2"><span className="font-medium">Total HT:</span><span className="font-bold">{totalHT.toFixed(2)} DH</span></div>
-                            <div className="flex justify-between mb-2"><span className="font-medium">TVA (20%):</span><span className="font-bold">{tva.toFixed(2)} DH</span></div>
-                            <div className="flex justify-between border-t pt-2"><span className="font-bold">Total TTC:</span><span className="font-bold text-lg text-purple-600">{totalTTC.toFixed(2)} DH</span></div>
+                {/* Step 3 — Bon de livraison (filtered by client) */}
+                {clientId && (
+                    <div className="mb-6">
+                        <label className="block text-sm font-medium mb-1">Bon de livraison *</label>
+                        {clientBLs.length === 0 ? (
+                            <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                                Aucun bon de livraison trouvé pour ce client.
+                            </p>
+                        ) : (
+                            <select value={selectedBLId} onChange={(e) => handleBLChange(e.target.value)} className="w-full border rounded px-3 py-2">
+                                <option value="">— Sélectionner un BL —</option>
+                                {clientBLs.map(bl => (
+                                    <option key={bl.id} value={bl.id}>
+                                        BL N° {bl.numero} — {new Date(bl.date).toLocaleDateString('fr-FR')} ({bl.items.length} article{bl.items.length > 1 ? 's' : ''})
+                                    </option>
+                                ))}
+                            </select>
+                        )}
+                    </div>
+                )}
+
+                {/* Step 4 — Articles (pre-filled from BL, user enters prices) */}
+                {formData.items.length > 0 && (
+                    <div className="mb-4">
+                        <div className="flex justify-between items-center mb-2">
+                            <h4 className="font-semibold">
+                                Articles
+                                {blSelected && <span className="ml-2 text-xs text-purple-600 font-normal">importés du BL — saisissez les prix unitaires</span>}
+                            </h4>
+                            <button onClick={addItem} className="bg-purple-600 text-white px-3 py-1 rounded text-sm flex items-center gap-1"><Plus size={16} />Ajouter</button>
+                        </div>
+                        <div className="border rounded">
+                            <table className="w-full">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        <th className="px-4 py-2 text-left text-sm">Désignation</th>
+                                        <th className="px-4 py-2 text-left text-sm w-24">Quantité</th>
+                                        <th className="px-4 py-2 text-left text-sm w-40">Prix Unit. HT (DH) *</th>
+                                        <th className="px-4 py-2 text-left text-sm w-32">Total HT (DH)</th>
+                                        <th className="px-4 py-2 w-10"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {formData.items.map((item, idx) => (
+                                        <tr key={idx} className="border-t">
+                                            <td className="px-4 py-2">
+                                                <input type="text" value={item.designation} onChange={(e) => updateItem(idx, 'designation', e.target.value)} className="w-full border rounded px-2 py-1" placeholder="Désignation" />
+                                            </td>
+                                            <td className="px-4 py-2">
+                                                <input type="number" value={item.quantite} onChange={(e) => updateItem(idx, 'quantite', parseFloat(e.target.value) || 0)} className="w-full border rounded px-2 py-1" min="0" />
+                                            </td>
+                                            <td className="px-4 py-2">
+                                                <input
+                                                    type="number"
+                                                    value={item.prixUnitaire || ''}
+                                                    onChange={(e) => updateItem(idx, 'prixUnitaire', parseFloat(e.target.value) || 0)}
+                                                    className={`w-full border rounded px-2 py-1 ${item.prixUnitaire === 0 ? 'border-amber-400 bg-amber-50' : ''}`}
+                                                    placeholder="0.00"
+                                                    min="0"
+                                                    step="0.01"
+                                                />
+                                            </td>
+                                            <td className="px-4 py-2 font-semibold">{(item.quantite * item.prixUnitaire).toFixed(2)}</td>
+                                            <td className="px-4 py-2">
+                                                {formData.items.length > 1 && <button onClick={() => removeItem(idx)} className="text-red-600 hover:text-red-800"><Trash2 size={16} /></button>}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
-                </div>
+                )}
+
+                {/* Totaux */}
+                {formData.items.length > 0 && (
+                    <div className="bg-gray-50 rounded p-4 mb-4">
+                        <div className="flex justify-end">
+                            <div className="w-64">
+                                <div className="flex justify-between mb-2"><span className="font-medium">Total HT:</span><span className="font-bold">{totalHT.toFixed(2)} DH</span></div>
+                                <div className="flex justify-between mb-2"><span className="font-medium">TVA (20%):</span><span className="font-bold">{tva.toFixed(2)} DH</span></div>
+                                <div className="flex justify-between border-t pt-2"><span className="font-bold">Total TTC:</span><span className="font-bold text-lg text-purple-600">{totalTTC.toFixed(2)} DH</span></div>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 <div className="flex gap-2">
                     <button onClick={handleSave} className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700">Enregistrer</button>
@@ -1961,6 +2145,8 @@ const App: React.FC = () => {
         const [showForm, setShowForm] = useState(false);
         const [editing, setEditing] = useState<SupplierInvoice | null>(null);
         const [busy, setBusy] = useState(false);
+        const [extracting, setExtracting] = useState(false);
+        const [extractionHint, setExtractionHint] = useState<string | null>(null);
         const [error, setError] = useState<string | null>(null);
         const [searchTerm, setSearchTerm] = useState('');
 
@@ -1970,12 +2156,49 @@ const App: React.FC = () => {
             setSupplierInvoices(invs); setAlerts(alerts);
         };
 
-        const emptyForm = { fournisseurId: '', reference: '', dateIssue: new Date().toISOString().split('T')[0], dateDue: '', totalHT: 0, tva: 0, totalTTC: 0, status: 'brouillon' as const, filePath: '', notes: '' };
+        const emptyForm = { fournisseurId: '', reference: '', dateIssue: new Date().toISOString().split('T')[0], dateDue: '', totalHT: 0, tva: 0, totalTTC: 0, status: 'en attente' as SupplierInvoice['status'], filePath: '', notes: '', items: [] as SupplierInvoiceItem[] };
         const [formData, setFormData] = useState(emptyForm);
 
         const updateTotals = (ht: number) => {
-            const tva = ht * 0.20;
-            setFormData(f => ({ ...f, totalHT: ht, tva, totalTTC: ht + tva }));
+            const tvaVal = ht * 0.20;
+            setFormData(f => ({ ...f, totalHT: ht, tva: tvaVal, totalTTC: ht + tvaVal }));
+        };
+
+        const handleImportAndExtract = async () => {
+            if (!isElectron || !window.electronAPI) return;
+            setExtracting(true);
+            setExtractionHint(null);
+            try {
+                const result = await window.electronAPI.extractAndUploadInvoice();
+                if (!result.success) return;
+                const e = result.extracted;
+                const hints: string[] = [];
+                setFormData(f => ({
+                    ...f,
+                    filePath: result.filePath || '',
+                    reference: e?.reference || f.reference,
+                    dateIssue: e?.dateIssue || f.dateIssue,
+                    totalHT: e?.totalHT ?? f.totalHT,
+                    tva: e?.tva ?? f.tva,
+                    totalTTC: e?.totalTTC ?? f.totalTTC,
+                    items: e?.items?.length ? e.items : f.items,
+                }));
+                if (!e?.reference) hints.push('référence');
+                if (!e?.totalTTC) hints.push('montants');
+                if (!e?.dateIssue) hints.push('date');
+                if (hints.length > 0) setExtractionHint(`Vérifiez : ${hints.join(', ')} (non détecté automatiquement).`);
+                else setExtractionHint('Extraction réussie — vérifiez les données avant d\'enregistrer.');
+                if (e?.fournisseurNom) {
+                    const match = fournisseurs.find(f => f.nom.toLowerCase().includes(e.fournisseurNom.toLowerCase().substring(0, 6)));
+                    if (match) setFormData(f => ({ ...f, fournisseurId: match.id.toString() }));
+                }
+                setShowForm(true);
+            } catch {
+                setExtractionHint('Erreur lors de l\'extraction. Veuillez saisir manuellement.');
+                setShowForm(true);
+            } finally {
+                setExtracting(false);
+            }
         };
 
         const handleFileUpload = async () => {
@@ -1995,7 +2218,7 @@ const App: React.FC = () => {
             setBusy(true); setError(null);
             try {
                 const fournisseur = fournisseurs.find(f => f.id === parseInt(formData.fournisseurId))!;
-                const payload = { ...formData, fournisseur, dateDue: formData.dateDue || undefined, filePath: formData.filePath || undefined };
+                const payload = { ...formData, fournisseur, dateDue: formData.dateDue || undefined, filePath: formData.filePath || undefined, items: formData.items };
                 if (isElectron && window.electronAPI) {
                     if (editing) await window.electronAPI.updateSupplierInvoice({ ...payload, id: editing.id } as SupplierInvoice);
                     else await window.electronAPI.createSupplierInvoice(payload as Omit<SupplierInvoice, 'id'>);
@@ -2013,18 +2236,28 @@ const App: React.FC = () => {
 
         const startEdit = (inv: SupplierInvoice) => {
             setEditing(inv);
-            setFormData({ fournisseurId: inv.fournisseur.id.toString(), reference: inv.reference, dateIssue: inv.dateIssue, dateDue: inv.dateDue || '', totalHT: inv.totalHT, tva: inv.tva, totalTTC: inv.totalTTC, status: inv.status, filePath: inv.filePath || '', notes: inv.notes || '' });
+            setFormData({ fournisseurId: inv.fournisseur.id.toString(), reference: inv.reference, dateIssue: inv.dateIssue, dateDue: inv.dateDue || '', totalHT: inv.totalHT, tva: inv.tva, totalTTC: inv.totalTTC, status: inv.status, filePath: inv.filePath || '', notes: inv.notes || '', items: inv.items || [] });
+            setExtractionHint(null);
             setShowForm(true);
         };
 
         const filtered = supplierInvoices.filter(i => i.reference.toLowerCase().includes(searchTerm.toLowerCase()) || i.fournisseur.nom.toLowerCase().includes(searchTerm.toLowerCase()));
-        const statusBadge = (s: string) => ({ 'payé': 'bg-green-100 text-green-800', 'en retard': 'bg-red-100 text-red-800', 'brouillon': 'bg-gray-100 text-gray-700' }[s] || 'bg-gray-100 text-gray-700');
+        const statusBadge = (s: string) => ({ 'payé': 'bg-green-100 text-green-800', 'en retard': 'bg-red-100 text-red-800', 'en attente': 'bg-blue-100 text-blue-700' }[s] || 'bg-gray-100 text-gray-700');
 
         return (
             <div className="p-6">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-3xl font-bold">Factures Fournisseurs</h2>
-                    <button onClick={() => { setShowForm(true); setEditing(null); setFormData(emptyForm); }} className="bg-orange-600 text-white px-4 py-2 rounded flex items-center gap-2"><Plus size={20} />Nouvelle Facture</button>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={handleImportAndExtract}
+                            disabled={extracting}
+                            className="bg-blue-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-blue-700 disabled:opacity-50"
+                        >
+                            <Download size={20} />{extracting ? 'Extraction...' : 'Importer un PDF'}
+                        </button>
+                        <button onClick={() => { setShowForm(true); setEditing(null); setFormData(emptyForm); setExtractionHint(null); }} className="bg-orange-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-orange-700"><Plus size={20} />Saisie manuelle</button>
+                    </div>
                 </div>
                 {error && <div className="mb-4 p-3 bg-red-100 text-red-800 rounded">{error}</div>}
 
@@ -2036,6 +2269,12 @@ const App: React.FC = () => {
                 {showForm && (
                     <div className="bg-white rounded-lg shadow p-6 mb-6">
                         <h3 className="text-xl font-bold mb-4">{editing ? 'Modifier' : 'Nouvelle'} Facture Fournisseur</h3>
+                        {extractionHint && (
+                            <div className={`mb-4 p-3 rounded flex items-start gap-2 text-sm ${extractionHint.startsWith('Extraction réussie') ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
+                                <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                                <span>{extractionHint}</span>
+                            </div>
+                        )}
                         <div className="grid grid-cols-3 gap-4 mb-4">
                             <div><label className="block text-sm font-medium mb-1">Fournisseur *</label>
                                 <select value={formData.fournisseurId} onChange={e => setFormData({ ...formData, fournisseurId: e.target.value })} className="w-full border rounded px-3 py-2">
@@ -2046,7 +2285,7 @@ const App: React.FC = () => {
                             <div><label className="block text-sm font-medium mb-1">Référence *</label><input type="text" value={formData.reference} onChange={e => setFormData({ ...formData, reference: e.target.value })} className="w-full border rounded px-3 py-2" /></div>
                             <div><label className="block text-sm font-medium mb-1">Statut</label>
                                 <select value={formData.status} onChange={e => setFormData({ ...formData, status: e.target.value as any })} className="w-full border rounded px-3 py-2">
-                                    <option value="brouillon">Brouillon</option>
+                                    <option value="en attente">En attente</option>
                                     <option value="payé">Payé</option>
                                     <option value="en retard">En retard</option>
                                 </select>
@@ -2058,6 +2297,65 @@ const App: React.FC = () => {
                             <div><label className="block text-sm font-medium mb-1">Total TTC (DH)</label><input type="number" value={formData.totalTTC.toFixed(2)} disabled className="w-full border rounded px-3 py-2 bg-gray-100" /></div>
                             <div className="col-span-3"><label className="block text-sm font-medium mb-1">Notes</label><textarea value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} rows={2} className="w-full border rounded px-3 py-2" /></div>
                         </div>
+
+                        {/* Désignations */}
+                        <div className="mb-4">
+                            <div className="flex justify-between items-center mb-2">
+                                <h4 className="font-semibold text-sm">
+                                    Désignations
+                                    {formData.items.length > 0 && extractionHint?.startsWith('Extraction') && (
+                                        <span className="ml-2 text-xs text-blue-600 font-normal">extraites du PDF — vérifiez</span>
+                                    )}
+                                </h4>
+                                <button
+                                    onClick={() => setFormData(f => ({ ...f, items: [...f.items, { designation: '', quantite: 1, prixUnitaire: 0, montant: 0 }] }))}
+                                    className="text-orange-600 hover:text-orange-800 text-sm flex items-center gap-1"
+                                ><Plus size={14} /> Ajouter une ligne</button>
+                            </div>
+                            {formData.items.length > 0 ? (
+                                <div className="border rounded overflow-hidden">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-gray-50">
+                                            <tr>
+                                                <th className="px-3 py-2 text-left">Désignation</th>
+                                                <th className="px-3 py-2 text-center w-20">Qté</th>
+                                                <th className="px-3 py-2 text-center w-28">Prix Unit. HT</th>
+                                                <th className="px-3 py-2 text-center w-28">Montant HT</th>
+                                                <th className="px-3 py-2 w-8"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {formData.items.map((item, idx) => (
+                                                <tr key={idx} className="border-t">
+                                                    <td className="px-3 py-1">
+                                                        <input type="text" value={item.designation}
+                                                            onChange={e => { const items = [...formData.items]; items[idx] = { ...items[idx], designation: e.target.value }; setFormData(f => ({ ...f, items })); }}
+                                                            className="w-full border rounded px-2 py-1" />
+                                                    </td>
+                                                    <td className="px-3 py-1">
+                                                        <input type="number" value={item.quantite} min="0" step="0.01"
+                                                            onChange={e => { const items = [...formData.items]; const q = parseFloat(e.target.value) || 0; items[idx] = { ...items[idx], quantite: q, montant: Math.round(q * items[idx].prixUnitaire * 100) / 100 }; setFormData(f => ({ ...f, items })); }}
+                                                            className="w-full border rounded px-2 py-1 text-center" />
+                                                    </td>
+                                                    <td className="px-3 py-1">
+                                                        <input type="number" value={item.prixUnitaire} min="0" step="0.01"
+                                                            onChange={e => { const items = [...formData.items]; const p = parseFloat(e.target.value) || 0; items[idx] = { ...items[idx], prixUnitaire: p, montant: Math.round(items[idx].quantite * p * 100) / 100 }; setFormData(f => ({ ...f, items })); }}
+                                                            className="w-full border rounded px-2 py-1 text-center" />
+                                                    </td>
+                                                    <td className="px-3 py-1 text-center font-semibold text-gray-700">{item.montant.toFixed(2)}</td>
+                                                    <td className="px-3 py-1">
+                                                        <button onClick={() => setFormData(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }))} className="text-red-500 hover:text-red-700"><Trash2 size={14} /></button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <p className="text-sm text-gray-400 italic">Aucune désignation — importez un PDF ou ajoutez manuellement.</p>
+                            )}
+                        </div>
+
                         {/* Fichier scan */}
                         <div className="mb-4 p-4 border-2 border-dashed rounded-lg">
                             <label className="block text-sm font-medium mb-2">Scan / PDF attaché</label>
