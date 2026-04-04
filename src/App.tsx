@@ -311,7 +311,7 @@ const App: React.FC = () => {
         // ── Facture status breakdown ───────────────────────────────────────
         const statusCounts = [
             { name: 'Payées',     value: factures.filter(f => f.status === 'payé').length,       color: '#22c55e' },
-            { name: 'En attente', value: factures.filter(f => f.status === 'brouillon' || f.status === 'en attente' || !f.status).length, color: '#3b82f6' },
+            { name: 'En attente', value: factures.filter(f => f.status === 'brouillon' || !f.status).length, color: '#3b82f6' },
             { name: 'En retard',  value: factures.filter(f => f.status === 'en retard').length,   color: '#ef4444' },
         ].filter(s => s.value > 0);
 
