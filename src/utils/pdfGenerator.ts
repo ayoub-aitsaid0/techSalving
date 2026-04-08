@@ -68,7 +68,7 @@ function drawInfoBoxes(doc: jsPDF, type: string, numero: string, dateStr: string
     doc.text(numero, 85, startY + 8, { align: 'right' });
 
     doc.setFont('helvetica', 'normal');
-    doc.text('Client :', 13, startY + 16);
+    doc.text('Code Client :', 13, startY + 16);
     doc.setFont('helvetica', 'bold');
 
     // Raccourcir le nom s'il est trop long pour la petite case
