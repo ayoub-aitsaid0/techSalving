@@ -216,11 +216,11 @@ const App: React.FC = () => {
         const year = new Date().getFullYear();
         const yearDocs = list.filter(d => d.numero.includes(`/${year}`));
 
-        // Définir le point de départ spécifique demandé pour 2026
+        // Starting offsets: next facture = 8, next devis = 20
         let baseOffset = 0;
         if (year === 2026) {
-            if (type === 'devis') baseOffset = 16; // Le prochain sera 17
-            else if (type === 'bl' || type === 'facture') baseOffset = 18; // Le prochain sera 19
+            if (type === 'devis') baseOffset = 19;   // next = 20
+            else if (type === 'facture') baseOffset = 7; // next = 8
         }
 
         // Trouver le plus grand numéro existant pour cette année

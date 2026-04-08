@@ -72,11 +72,8 @@ function drawInfoBoxes(doc: jsPDF, type: string, numero: string, dateStr: string
     doc.setFont('helvetica', 'bold');
 
     // Raccourcir le nom s'il est trop long pour la petite case
-    let displayName = client.nom;
-    if (displayName.length > 25) {
-        displayName = displayName.substring(0, 25) + '...';
-    }
-    doc.text(displayName, 85, startY + 16, { align: 'right' });
+    const displayCode = client.code.length > 25 ? client.code.substring(0, 25) + '...' : client.code;
+    doc.text(displayCode, 85, startY + 16, { align: 'right' });
 
     doc.setFont('helvetica', 'normal');
     doc.text(`Ouarzazate le, ${dateStr}`, 13, startY + 24);
@@ -86,7 +83,7 @@ function drawInfoBoxes(doc: jsPDF, type: string, numero: string, dateStr: string
     doc.roundedRect(120, startY, 80, 28, 2, 2, 'S');
 
     doc.setFont('helvetica', 'bold');
-    doc.text(client.nom, 160, startY + 8, { align: 'center' });
+    doc.text(client.code, 160, startY + 8, { align: 'center' });
 
     doc.setFont('helvetica', 'normal');
     const splitAddress = doc.splitTextToSize(client.address || '', 75);
